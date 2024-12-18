@@ -3,101 +3,93 @@
 #include <stdlib.h>
 #include <time.h>
 
-#define MATRIX_SIZE 1000
+#define N 1000 // 행렬 크기 (1000x1000)
 
-// Function to initialize a matrix with random values
-void initialize_matrix(double* matrix, int rows, int cols) {
-    for (int i = 0; i < rows * cols; i++) {
-        matrix[i] = rand() % 10; // Random numbers between 0 and 9
+// 두 행렬의 초기화
+void initialize_matrices(double A[N][N], double B[N][N]) {
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            A[i][j] = (double)(rand() % 10); // 랜덤 값 (0~9)
+            B[i][j] = (double)(rand() % 10);
+        }
     }
 }
 
-// Function to print a matrix (optional, for debugging purposes)
-void print_matrix(double* matrix, int rows, int cols) {
-    for (int i = 0; i < rows; i++) {
-        for (int j = 0; j < cols; j++) {
-            printf("%f ", matrix[i * cols + j]);
+// 결과 행렬 출력 (디버깅용, 큰 행렬은 생략 가능)
+void print_matrix(double C[N][N]) {
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            printf("%.1f ", C[i][j]);
         }
         printf("\n");
     }
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char *argv[]) {
     int rank, size;
+    double A[N][N], B[N][N], C[N][N];
+    double start_time, end_time;
 
+    // MPI 초기화
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    int rows_per_process = MATRIX_SIZE / size; // Number of rows per process
+    // 각 프로세스가 처리할 행 수
+    int rows_per_proc = N / size;
+    int start_row = rank * rows_per_proc;
+    int end_row = (rank == size - 1) ? N : start_row + rows_per_proc;
 
-    // Allocate memory for matrices
-    double* A = NULL;
-    double* B = NULL;
-    double* C = (double*)malloc(rows_per_process * MATRIX_SIZE * sizeof(double)); // Result matrix for each process
-
-    if (rank == 0) {
-        // Only the root process initializes the matrices
-        A = (double*)malloc(MATRIX_SIZE * MATRIX_SIZE * sizeof(double));
-        B = (double*)malloc(MATRIX_SIZE * MATRIX_SIZE * sizeof(double));
-        initialize_matrix(A, MATRIX_SIZE, MATRIX_SIZE);
-        initialize_matrix(B, MATRIX_SIZE, MATRIX_SIZE);
+    // 모든 프로세스에서 결과 행렬을 0으로 초기화
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i][j] = 0.0;
+        }
     }
 
-    // Scatter rows of matrix A to all processes
-    double* A_sub = (double*)malloc(rows_per_process * MATRIX_SIZE * sizeof(double));
-    MPI_Scatter(A, rows_per_process * MATRIX_SIZE, MPI_DOUBLE, A_sub, rows_per_process * MATRIX_SIZE, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    // Broadcast matrix B to all processes
+    // 0번 프로세스에서 행렬 초기화
     if (rank == 0) {
-        MPI_Bcast(B, MATRIX_SIZE * MATRIX_SIZE, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    } else {
-        B = (double*)malloc(MATRIX_SIZE * MATRIX_SIZE * sizeof(double));
-        MPI_Bcast(B, MATRIX_SIZE * MATRIX_SIZE, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        srand(time(NULL));
+        initialize_matrices(A, B);
     }
 
-    // Start the timer
-    double start_time = MPI_Wtime();
+    // 모든 프로세스에 B 전송 (B는 모든 프로세스가 공유해야 함)
+    MPI_Bcast(B, N * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    // Perform matrix multiplication for the assigned rows
-    for (int i = 0; i < rows_per_process; i++) {
-        for (int j = 0; j < MATRIX_SIZE; j++) {
-            C[i * MATRIX_SIZE + j] = 0.0;
-            for (int k = 0; k < MATRIX_SIZE; k++) {
-                C[i * MATRIX_SIZE + j] += A_sub[i * MATRIX_SIZE + k] * B[k * MATRIX_SIZE + j];
+    // A의 각 행을 프로세스에 나누어 전송
+    double local_A[rows_per_proc][N];
+    MPI_Scatter(A, rows_per_proc * N, MPI_DOUBLE, local_A, rows_per_proc * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    // 시작 시간 기록
+    if (rank == 0) {
+        start_time = MPI_Wtime();
+    }
+
+    // 각 프로세스가 자신의 범위에 해당하는 행렬 곱셈 수행
+    double local_C[rows_per_proc][N];
+    for (int i = 0; i < rows_per_proc; i++) {
+        for (int j = 0; j < N; j++) {
+            local_C[i][j] = 0.0;
+            for (int k = 0; k < N; k++) {
+                local_C[i][j] += local_A[i][k] * B[k][j];
             }
         }
     }
 
-    // Gather the results from all processes
+    // 모든 프로세스의 계산 결과를 C로 모음
+    MPI_Gather(local_C, rows_per_proc * N, MPI_DOUBLE, C, rows_per_proc * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    // 종료 시간 기록
     if (rank == 0) {
-        MPI_Gather(MPI_IN_PLACE, rows_per_process * MATRIX_SIZE, MPI_DOUBLE, C, rows_per_process * MATRIX_SIZE, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    } else {
-        MPI_Gather(C, rows_per_process * MATRIX_SIZE, MPI_DOUBLE, NULL, rows_per_process * MATRIX_SIZE, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        end_time = MPI_Wtime();
+        printf("Elapsed time = %f seconds\n", end_time - start_time);
+
+        // (디버깅용) 결과 행렬 출력
+        // printf("Result matrix C:\n");
+        // print_matrix(C);
     }
 
-    // Stop the timer
-    double end_time = MPI_Wtime();
-
-    // Root process prints the elapsed time
-    if (rank == 0) {
-        printf("Matrix multiplication completed in %f seconds.\n", end_time - start_time);
-
-        // Uncomment to print the resulting matrix
-        // print_matrix(C, MATRIX_SIZE, MATRIX_SIZE);
-
-        // Free matrices on the root process
-        free(A);
-        free(B);
-    }
-
-    // Free allocated memory
-    free(A_sub);
-    free(C);
-    if (rank != 0) {
-        free(B);
-    }
-
+    // MPI 종료
     MPI_Finalize();
     return 0;
 }
