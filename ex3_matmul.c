@@ -27,7 +27,7 @@ void print_matrix(double C[N][N]) {
 
 int main(int argc, char *argv[]) {
     int rank, size;
-    double A[N][N], B[N][N], C[N][N];
+    double (*A)[N], (*B)[N], (*C)[N]; // 동적 메모리로 변환
     double start_time, end_time;
 
     // MPI 초기화
@@ -40,24 +40,25 @@ int main(int argc, char *argv[]) {
     int start_row = rank * rows_per_proc;
     int end_row = (rank == size - 1) ? N : start_row + rows_per_proc;
 
-    // 모든 프로세스에서 결과 행렬을 0으로 초기화
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < N; j++) {
-            C[i][j] = 0.0;
-        }
-    }
-
-    // 0번 프로세스에서 행렬 초기화
+    // 행렬 동적 메모리 할당
     if (rank == 0) {
+        A = (double(*)[N])malloc(N * N * sizeof(double));
+        B = (double(*)[N])malloc(N * N * sizeof(double));
+        C = (double(*)[N])malloc(N * N * sizeof(double));
         srand(time(NULL));
         initialize_matrices(A, B);
+    } else {
+        B = (double(*)[N])malloc(N * N * sizeof(double)); // 모든 프로세스가 B 필요
     }
+
+    // 로컬 행렬 동적 메모리 할당
+    double (*local_A)[N] = (double(*)[N])malloc(rows_per_proc * N * sizeof(double));
+    double (*local_C)[N] = (double(*)[N])malloc(rows_per_proc * N * sizeof(double));
 
     // 모든 프로세스에 B 전송 (B는 모든 프로세스가 공유해야 함)
     MPI_Bcast(B, N * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     // A의 각 행을 프로세스에 나누어 전송
-    double local_A[rows_per_proc][N];
     MPI_Scatter(A, rows_per_proc * N, MPI_DOUBLE, local_A, rows_per_proc * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     // 시작 시간 기록
@@ -66,7 +67,6 @@ int main(int argc, char *argv[]) {
     }
 
     // 각 프로세스가 자신의 범위에 해당하는 행렬 곱셈 수행
-    double local_C[rows_per_proc][N];
     for (int i = 0; i < rows_per_proc; i++) {
         for (int j = 0; j < N; j++) {
             local_C[i][j] = 0.0;
@@ -87,6 +87,15 @@ int main(int argc, char *argv[]) {
         // (디버깅용) 결과 행렬 출력
         // printf("Result matrix C:\n");
         // print_matrix(C);
+    }
+
+    // 메모리 해제
+    free(local_A);
+    free(local_C);
+    free(B);
+    if (rank == 0) {
+        free(A);
+        free(C);
     }
 
     // MPI 종료
