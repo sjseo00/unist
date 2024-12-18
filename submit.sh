@@ -7,4 +7,4 @@
 #SBATCH -N 2 # number of node
 #SBATCH -n 8 # total process
 
-srun ./mpi.exe
+mpirun ./test
