@@ -21,5 +21,4 @@ int main(int argc, char** argv) {
     // MPI 환경 정리
     MPI_Finalize();
     return 0; 
-    Test2
 }
