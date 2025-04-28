@@ -6,5 +6,5 @@
 #SBATCH -p gpu_k80
 #SBATCH -N 2 # number of node
 #SBATCH -n 8 # total process
-
+test2
 mpirun ./test
